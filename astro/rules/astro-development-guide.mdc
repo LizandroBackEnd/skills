@@ -1,0 +1,99 @@
+---
+alwaysApply: true
+---
+
+# UNIVERSAL ASTRO STRICT RULES
+
+## 1. COMPONENT ARCHITECTURE AND HYDRATION RULES
+- **Absolute Hydration Directive Prohibition**: Client-side hydration directives such as `client:load`, `client:visible`, and `client:idle` are strictly prohibited unless client-side interactivity is explicitly required. All components must default to 0 KB of client-side JavaScript by using server-only `.astro` components that compile to static HTML at build time or on-demand.
+- **Mandatory Low-Priority Hydration**: Below-the-fold or non-critical interactive components must use lazy hydration directives such as `client:visible` (with optional `rootMargin`) or `client:idle` (with optional `timeout`) instead of high-priority `client:load` to prevent blocking the main browser thread during initial page load.
+- **Server Islands Fallbacks**: Every server component utilizing the `server:defer` directive to defer rendering must declare an accessible fallback placeholder using a named slot (`slot="fallback"`) to ensure content is served progressively without causing Cumulative Layout Shift.
+- **Strict Isolation Boundaries**: Importing `.astro` components inside client framework components (such as React, Vue, Svelte, or Solid files) is absolutely prohibited. Framework components must remain self-contained islands importing only their own native framework assets.
+
+## 2. STATE MANAGEMENT AND PROPS PASSING
+- **Global Context Providers Prohibition**: Wrapping `.astro` layouts or components with framework-specific global context providers (e.g., React Context, Svelte Context) is absolutely prohibited as it forces massive single-page application hydration bundles and breaks selective island compilation. State between independent framework islands must be managed exclusively using lightweight, tree-shakable Nano Stores.
+- **Props Serialization Limits**: Props passed from `.astro` files to hydrated framework components must be strictly JSON-serializable primitives or plain objects. Passing non-serializable structures such as functions, complex class instances, or promises to interactive client components is prohibited, as they cannot execute on the client-side across the server-client boundary.
+
+## 3. DATA FETCHING AND CONTENT COLLECTIONS
+- **Mandatory Content Collections**: Local structured content (such as Markdown, MDX, JSON, YAML, or TOML) must be managed using Astro Content Collections with schemas defined via Zod inside `src/content.config.ts` or `src/content/config.ts`.
+- **Fenced Server-Side Data Fetching**: Server-side data fetching must reside strictly within the `.astro` component's frontmatter (---) script block or inside server endpoints (`.js`/`.ts` files located under `src/pages/`). This guarantees that database credentials, private API keys, and expensive queries remain completely fenced from the client bundle.
+
+## 4. ASSET OPTIMIZATION AND NAMING CONVENTIONS
+- **Mandatory Optimized Image Component**: All local and remote images must be rendered using the `<Image />` or `<Picture />` component from `astro:assets`. Using direct HTML `<img>` tags for local images in the `src/` directory is strictly prohibited as it bypasses build-time compression, format conversion, and Cumulative Layout Shift prevention.
+- **Naming Casing Conventions**: File and directory names must strictly follow casing rules to prevent filesystem mismatches:
+  - PascalCase for reusable UI components (e.g., `Header.astro`, `Button.tsx`).
+  - kebab-case for files and routing directories within `src/pages/` (e.g., `src/pages/about-us.astro`, `src/pages/api/get-user.ts`).
+
+## 5. STRICT PROHIBITIONS AND ANTI-PATTERNS (DO'S AND DON'TS)
+
+### Boxed Primitives in Schema Definition
+- **Never Do This**: Typing schemas or properties using capitalized Boxed Wrapper classes.
+```typescript
+import { z } from 'astro/zod';
+export const schema = z.object({
+  title: String, // Invalid boxed primitive wrapper
+});
+```
+- **Do This Instead**: Always use standard lowercase primitives for schemas and types.
+```typescript
+import { z } from 'astro/zod';
+export const schema = z.object({
+  title: z.string(), // Correct lowercase primitive
+});
+```
+
+### Passing Callback Functions to Hydrated Components
+- **Never Do This**: Passing active callback functions as props to components hydrated with client directives.
+```astro
+---
+import InteractiveButton from '../components/InteractiveButton.jsx';
+const handleClick = () => { console.log('Clicked'); };
+---
+<InteractiveButton client:load onClick={handleClick} />
+```
+- **Do This Instead**: Keep props strictly serializable and handle active handlers internally or use named slots for static children.
+```astro
+---
+import InteractiveButton from '../components/InteractiveButton.jsx';
+---
+<InteractiveButton client:load />
+```
+
+### Unoptimized Native Image Tags
+- **Never Do This**: Using native HTML `<img>` tags for local assets stored in `src/`.
+```astro
+---
+import banner from '../assets/banner.png';
+---
+<img src={banner.src} alt="Banner" />
+```
+- **Do This Instead**: Render all local and authorized remote images using the optimized `<Image />` component.
+```astro
+---
+import { Image } from 'astro:assets';
+import banner from '../assets/banner.png';
+---
+<Image src={banner} alt="Banner" />
+```
+
+### Mixing Client Logic in Astro Frontmatter
+- **Never Do This**: Adding event listeners, browser-only APIs, or global window state checks inside the server-rendered frontmatter block.
+```astro
+---
+// This script runs on the server during rendering
+if (typeof window !== 'undefined') {
+  window.addEventListener('scroll', () => {});
+}
+---
+```
+- **Do This Instead**: Keep the frontmatter strictly server-side and load client logic using standard `<script>` tags, lifecycle events, or hydrated framework components.
+```astro
+<script>
+  // This script is bundled and runs on the client
+  window.addEventListener('scroll', () => {});
+</script>
+```
+
+### Non-Deterministic Direct Route Matching Conflicts
+- **Never Do This**: Defining multiple identical static routes or overlapping dynamic paths that create build conflicts.
+- **Do This Instead**: Resolve route priority issues by structuring paths with explicit static segments or checking route rules carefully.

@@ -1,0 +1,96 @@
+---
+alwaysApply: true
+---
+
+# UNIVERSAL TAILWIND CSS STRICT RULES
+
+## 1. UTILITY-FIRST AND CLASS INTEGRITY RULES
+- **No Dynamic Class Construction**: Absolutely prohibit constructing class names via string interpolation or concatenation (e.g., `text-${color}-500`). Tailwind CSS works by statically scanning files for complete class strings; dynamic strings are invisible to the parser, causing those styles to be omitted from the compiled stylesheet. All class names must be fully written out in the source code.
+- **Restrict Arbitrary Values**: Avoid excessive use of arbitrary values (e.g., `w-[327px]`, `text-[#123456]`). Maintain design consistency and structural integrity by utilizing configured design system tokens (such as spacing scales, font weights, and semantic color palettes). Arbitrary values should be reserved for legacy alignments or one-off values (such as specific grid-cols layouts or external brand colors).
+- **Limit @apply Usage**: Restrict the use of the `@apply` directive within global CSS stylesheets. Creating stylesheet-level abstractions is an anti-pattern that leads to code duplication and overrides the benefits of utility-first styling. Extract styles into reusable UI templates or framework components (Astro, React, Vue, Svelte) instead of creating custom CSS classes.
+
+## 2. COMPONENT VARIANTS AND CLASS MERGING
+- **Type-Safe Variants with CVA**: Use Class Variance Authority (`cva`) exclusively to manage and declare styling configurations for components with multiple variants, sizes, or visual states. Variant maps must bind directly to TypeScript interfaces for type safety.
+- **Mandatory Conflict Resolution**: Merge conditional class lists and accept consumer-provided class overrides exclusively through a unified `cn` utility function powered by `clsx` and `tailwind-merge` (`twMerge`). This ensures that later classes dynamically override preceding classes according to Tailwind's specificity rules, preventing stylesheet-level property collisions.
+
+## 3. RESPONSIVE DESIGN AND STATE MODIFIERS
+- **Mobile-First Breakpoint Paradigm**: Implement layout structures strictly from mobile viewports upward. Unprefixed utilities must declare baseline styles for mobile displays first. Breakpoint prefixes (`sm:`, `md:`, `lg:`, `xl:`, `2xl:`) must only apply styles at that specific viewport range and above. Avoid utilizing custom viewport media query overrides in stylesheets.
+- **Deterministic State Modifier Ordering**: Apply pseudo-classes and state variants in a standardized, deterministic order: baseline -> responsive breakpoint -> state modifier (e.g., `hover:`, `focus:`, `active:`, `disabled:`). Stacking modifiers must maintain strict logical flow (e.g., `dark:md:hover:bg-red-500`).
+- **State Synchronization via Group and Peer**: Manage parent-child hover/focus states using `group` and `group-*` modifiers. Manage adjacent sibling state interactions using `peer` and `peer-*` modifiers. Avoid custom JavaScript mouse event handlers for standard interactive UI behaviors.
+
+## 4. CODE FORMATTING AND ORDERING
+- **Automated Prettier Class Sorting**: Enforce automatic, deterministic class sorting in code templates using `prettier-plugin-tailwindcss`. Class strings must strictly comply with the official ordering standard: Layout (e.g., `flex`, `grid`) -> Box Model (e.g., `p-*`, `m-*`, `w-*`) -> Typography (e.g., `text-*`, `font-*`) -> Visual effects (e.g., `bg-*`, `border-*`) -> Miscellaneous.
+- **Logical Grouping**: Group related utility classes logically during manual authorship to ensure immediate readability prior to automatic linter-based adjustments.
+
+## 5. STRICT PROHIBITIONS AND ANTI-PATTERNS (DO'S AND DON'TS)
+
+### Boxed Primitives in Arbitrary Styles
+* **Never Do This**: Do not pass raw inline style attributes or arbitrary pixel values when there are configured theme tokens available.
+```html
+<!-- INCORRECT -->
+<div style="background-color: #121063; padding: 16px;" class="w-[327px]"></div>
+```
+* **Do This Instead**: Reference defined theme variable tokens or standard spacing utilities directly in your classes.
+```html
+<!-- CORRECT -->
+<div class="bg-midnight p-4 w-80"></div>
+```
+
+### Class Interpolation and Concatenation
+* **Never Do This**: Never construct utility class names dynamically using string concatenation.
+```javascript
+// INCORRECT
+const Button = ({ color }) => {
+  return <button className={`bg-${color}-500 text-white p-2`} />;
+};
+```
+* **Do This Instead**: Fully write out complete class names, or use static lookups mapped to properties.
+```javascript
+// CORRECT
+const Button = ({ color }) => {
+  const colorMap = {
+    blue: "bg-blue-500",
+    red: "bg-red-500",
+  };
+  return <button className={`${colorMap[color]} text-white p-2`} />;
+};
+```
+
+### Direct Style Overrides Without Merge
+* **Never Do This**: Do not perform simple string concatenation of external class props, which leads to layout and style collision bugs due to CSS stylesheet order.
+```javascript
+// INCORRECT
+const Card = ({ className }) => {
+  return <div className={`p-4 bg-white rounded-lg ${className}`} />;
+};
+```
+* **Do This Instead**: Process dynamic classes through the `cn` (`clsx` + `tailwind-merge`) utility to safely resolve conflicts.
+```javascript
+// CORRECT
+import { cn } from "./utils";
+
+const Card = ({ className }) => {
+  return <div className={cn("p-4 bg-white rounded-lg", className)} />;
+};
+```
+
+### Custom JS Event Listeners for Simple Hover States
+* **Never Do This**: Do not bind React state or JavaScript event handlers to capture hover behaviors to swap children states.
+```javascript
+// INCORRECT
+const [isHovered, setIsHovered] = useState(false);
+return (
+  <div onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)}>
+    <span style={{ color: isHovered ? "blue" : "black" }}>Label</span>
+  </div>
+);
+```
+* **Do This Instead**: Use native CSS parent/child variant selectors such as `group` and `group-hover`.
+```javascript
+// CORRECT
+return (
+  <div class="group">
+    <span class="text-black group-hover:text-blue-500">Label</span>
+  </div>
+);
+```

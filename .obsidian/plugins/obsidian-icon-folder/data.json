@@ -1,0 +1,64 @@
+{
+  "settings": {
+    "migrated": 6,
+    "iconPacksPath": ".obsidian/icons",
+    "fontSize": 16,
+    "emojiStyle": "native",
+    "iconColor": null,
+    "recentlyUsedIcons": [
+      "LiLightbulb",
+      "TiFolderStar",
+      "TiFolderCheck",
+      "SiTailwindcss",
+      "SiGit"
+    ],
+    "recentlyUsedIconsSize": 5,
+    "rules": [
+      {
+        "rule": "\\.mdc$",
+        "icon": "LiScale",
+        "for": "everything",
+        "order": 0
+      }
+    ],
+    "extraMargin": {
+      "top": 0,
+      "right": 4,
+      "bottom": 0,
+      "left": 0
+    },
+    "iconInTabsEnabled": false,
+    "iconInTitleEnabled": false,
+    "iconInTitlePosition": "above",
+    "iconInFrontmatterEnabled": false,
+    "iconInFrontmatterFieldName": "icon",
+    "iconColorInFrontmatterFieldName": "iconColor",
+    "iconsBackgroundCheckEnabled": false,
+    "iconsInNotesEnabled": true,
+    "iconsInLinksEnabled": true,
+    "iconIdentifier": ":",
+    "lucideIconPackType": "native",
+    "debugMode": false,
+    "useInternalPlugins": false
+  },
+  "typescript": "SiTypescript",
+  "astro": "SiAstro",
+  "nextjs": "SiNextdotjs",
+  "php": "SiPhp",
+  "laravel": "SiLaravel",
+  "nestjs": "SiNestjs",
+  "docker": "SiDocker",
+  "typescript/rules": "TiFolderCheck",
+  "typescript/skills": "TiFolderStar",
+  "README.md": "TiExclamationCircle",
+  "typescript/skills/SKILL.md": "LiLightbulb",
+  "astro/rules": "TiFolderCheck",
+  "astro/skills": "TiFolderStar",
+  "git": "SiGit",
+  "astro/skills/SKILL.md": "LiLightbulb",
+  "git/skills": "TiFolderStar",
+  "tailwind css": "SiTailwindcss",
+  "tailwind css/rules": "TiFolderCheck",
+  "tailwind css/skills": "TiFolderStar",
+  "tailwind css/skills/SKILL.md": "LiLightbulb"
+}

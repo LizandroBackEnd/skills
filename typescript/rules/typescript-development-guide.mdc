@@ -1,0 +1,415 @@
+---
+alwaysApply: true
+---
+
+# UNIVERSAL TYPESCRIPT STRICT RULES
+
+## 1. MANDATORY TYPING RULES (STRICT COMPILATION)
+
+### 1.1 Absolute Prohibition of `any`
+- **Rule**: Explicit and implicit `any` are strictly prohibited.
+- **Rationale**: The `any` type disables static type checking, masking programming errors and undermining the safety of the codebase.
+- **Mandatory Practice**: For dynamic, unvalidated, or unknown data (e.g., API responses, parsed JSON, third-party libraries), use the `unknown` type. You must narrow the type to a specific contract using type guards, assertion functions, or schema validation before performing any operations on it.
+- **Compilation Enforcement**: Enable `noImplicitAny` inside the compiler options to report errors on any variables or expressions with an implied `any` type.
+
+```typescript
+// INCORRECT / ANTIPATTERN
+function processPayload(data: any) {
+  console.log(data.userId); // Unchecked property access
+  data.execute();          // Unchecked method call
+}
+
+// CORRECT / CLEAN
+interface UserPayload {
+  userId: string;
+}
+
+function isUserPayload(value: unknown): value is UserPayload {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "userId" in value &&
+    typeof (value as UserPayload).userId === "string"
+  );
+}
+
+function processPayloadSafe(data: unknown): void {
+  if (isUserPayload(data)) {
+    console.log(data.userId); // Safe, type narrowed to UserPayload
+  } else {
+    throw new Error("Invalid payload structure");
+  }
+}
+```
+
+### 1.2 Explicit Return Types for Public Boundaries
+- **Rule**: You must declare explicit return types on all exported functions, public class methods, and public API boundaries.
+- **Rationale**: While local type inference is convenient, explicit return types at public boundaries serve as documentation, surface type errors faster when internal logic shifts, and significantly reduce compiler overhead by preventing the generation of deep, anonymous import paths in generated declaration files (`.d.ts`).
+- **Compilation Enforcement**: Enable `declaration` and `isolatedDeclarations` to ensure all exports are annotated sufficiently to trivially generate declaration files.
+
+```typescript
+// INCORRECT / ANTIPATTERN
+export function getUserSession(id: string) {
+  return {
+    id,
+    active: true,
+    roles: ["admin"]
+  };
+}
+
+// CORRECT / CLEAN
+export interface UserSession {
+  id: string;
+  active: boolean;
+  roles: string[];
+}
+
+export function getUserSessionSafe(id: string): UserSession {
+  return {
+    id,
+    active: true,
+    roles: ["admin"]
+  };
+}
+```
+
+### 1.3 Total Prohibition of the Non-Null Assertion Operator (`!`)
+- **Rule**: The non-null assertion operator (`!`) is strictly forbidden.
+- **Rationale**: The `!` operator silences the compiler without inserting any runtime protection, exposing the application to crashes if a value is `null` or `undefined` at runtime.
+- **Mandatory Practice**: Use optional chaining (`?.`), nullish coalescing (`??`), or explicit flow control blocks to check and handle the absence of a value safely.
+- **Compilation Enforcement**: Enable `strictNullChecks` to force explicit checks for `null` and `undefined` types.
+
+```typescript
+// INCORRECT / ANTIPATTERN
+function getProfilePicture(user?: { avatarUrl?: string }): string {
+  return user!.avatarUrl!; // Crashes if user or avatarUrl is missing
+}
+
+// CORRECT / CLEAN
+function getProfilePictureSafe(user?: { avatarUrl?: string }): string {
+  if (!user || !user.avatarUrl) {
+    return "https://example.com/default-avatar.png";
+  }
+  return user.avatarUrl;
+}
+```
+
+### 1.4 Safe Type Casting and Assertion Boundaries
+- **Rule**: Avoid unsafe type assertions (`as Type`). Under no circumstances use double assertions (`as unknown as Type`) unless working with third-party library typing bugs.
+- **Rationale**: Type assertions bypass type-checking during compilation and do not emit runtime assertions, creating a gap between the declared type and actual runtime representation.
+- **Mandatory Practice**: Rely on structural annotations (`: Type`) when initializing object literals. Apply user-defined type guards (`is`) or assertion functions (`asserts`) when interacting with dynamic runtime data.
+
+```typescript
+// INCORRECT / ANTIPATTERN
+interface Book {
+  title: string;
+  pages: number;
+}
+
+// Creating an object literal with an assertion hides omitted properties
+const myBook = {
+  title: "Clean Code"
+} as Book; // Compiles fine, but pages is undefined at runtime!
+
+// CORRECT / CLEAN
+// Enforce compile-time property validation via direct type annotation
+const myBookSafe: Book = {
+  title: "Clean Code",
+  pages: 450 // Compiler forces inclusion of all required properties
+};
+```
+
+---
+
+## 2. TYPE SYSTEM AND DESIGN CONVENTIONS
+
+### 2.1 Interface vs Type Aliases Usage Guidelines
+- **Rule**: Use `interface` declarations for all structural object definitions and contracts. Use `type` aliases exclusively for union types, intersection types, primitives, tuples, mapped types, or conditional types.
+- **Rationale**: The TypeScript compiler optimizes interfaces significantly better than type literal aliases. Interface type relationships are cached internally, and the compiler performs fast lookup checks. Interfaces also detect and report property conflicts cleanly, merge declarations dynamically, and provide clearer, fully-named error diagnostics.
+
+```typescript
+// INCORRECT / ANTIPATTERN
+type Repository = {
+  find(id: string): unknown;
+};
+
+// CORRECT / CLEAN
+interface Repository {
+  find(id: string): unknown;
+}
+
+// Appropriate use of 'type' alias for non-object literal shapes
+type ID = string | number;
+type FetchState = "idle" | "loading" | "success" | "failure";
+```
+
+### 2.2 Immutable State and Defensive APIs via Readonly
+- **Rule**: Enforce immutability for all function parameters, application states, and properties that must not be mutated. Use the `readonly` modifier on class fields and interface properties. Wrap array parameters with `readonly T[]` (instead of `ReadonlyArray<T>`), and enforce `Readonly<T>` for nested states.
+- **Rationale**: Readonly annotations prevent accidental state modification bugs at compile time and align with clean architecture data integrity rules.
+
+```typescript
+// INCORRECT / ANTIPATTERN
+interface Config {
+  host: string;
+  ports: number[];
+}
+
+function initService(config: Config) {
+  config.host = "localhost"; // Mutation allowed
+  config.ports.push(80);     // Mutation allowed
+}
+
+// CORRECT / CLEAN
+interface ConfigSafe {
+  readonly host: string;
+  readonly ports: readonly number[]; // Use syntax sugar for simple types
+}
+
+function initServiceSafe(config: Readonly<ConfigSafe>): void {
+  // config.host = "localhost"; // Compile error!
+  // config.ports.push(80);     // Compile error!
+}
+```
+
+### 2.3 Discriminated Unions for State and API Responses
+- **Rule**: Model multi-state workflows (such as loading states, network requests, or domain events) as Discriminated Unions utilizing a literal `kind` or `status` discriminant. Never use concurrent, independent boolean flags (e.g., `isLoading`, `isError`, `data`).
+- **Rationale**: Boolean flags permit invalid states (e.g., `isLoading: true` and `isError: true` simultaneously). Discriminated unions represent mutually exclusive states accurately in the type system, enabling compiler-verified exhaustiveness checking (`never` assertion).
+
+```typescript
+// INCORRECT / ANTIPATTERN
+interface ApiResponse {
+  isLoading: boolean;
+  isError: boolean;
+  data?: string;
+  error?: string;
+}
+
+// CORRECT / CLEAN
+interface IdleState {
+  readonly status: "idle";
+}
+
+interface LoadingState {
+  readonly status: "loading";
+}
+
+interface SuccessState {
+  readonly status: "success";
+  readonly data: string;
+}
+
+interface FailureState {
+  readonly status: "failure";
+  readonly error: string;
+}
+
+type NetworkState = IdleState | LoadingState | SuccessState | FailureState;
+
+function handleResponse(state: NetworkState): string {
+  switch (state.status) {
+    case "idle":
+      return "Ready to load";
+    case "loading":
+      return "Loading data...";
+    case "success":
+      return `Loaded: ${state.data}`;
+    case "failure":
+      return `Error: ${state.error}`;
+    default: {
+      const _exhaustiveCheck: never = state; // Compiler verifies no cases are missed
+      return _exhaustiveCheck;
+    }
+  }
+}
+```
+
+### 2.4 Prohibition of Heterogeneous or Numeric Enums
+- **Rule**: Do not use standard numeric or heterogeneous `enum` declarations, nor `const enum` structures.
+- **Rationale**: Standard enums generate runtime objects with confusing reverse-mapping semantics, and their values are implicitly coerced to numbers. Conversely, `const enum` declarations do not generate runtime objects and fail under file-by-file compilation contexts (`isolatedModules`).
+- **Mandatory Practice**: Enforce String Literal Unions or Object Constants with `as const` assertions.
+
+```typescript
+// INCORRECT / ANTIPATTERN
+enum Role {
+  Admin,  // 0
+  User,   // 1
+  Guest   // 2
+}
+
+// CORRECT / CLEAN
+// Option A: String Literal Union
+export type UserRole = "admin" | "user" | "guest";
+
+// Option B: Constant Object with "as const"
+export const ROLES = {
+  ADMIN: "admin",
+  USER: "user",
+  GUEST: "guest"
+} as const;
+
+export type SystemRole = typeof ROLES[keyof typeof ROLES];
+```
+
+---
+
+## 3. FILE SYSTEM AND NAMING CONVENTIONS
+
+### 3.1 File System Casing and Structure
+- **Rule**: Use `kebab-case` for all source file and directory names.
+- **Rationale**: Case sensitivity varies across host operating systems and file systems. Standardizing on `kebab-case` prevents silent import resolution errors on case-insensitive machines that crash during production builds on case-sensitive servers.
+- **Naming Constraints**:
+  - Never use leading or trailing underscores in identifiers or file names.
+  - Names should be descriptive. Do not use ambiguous abbreviations or drop internal letters within words.
+
+### 3.2 Uniform Export and Import Patterns
+- **Rule**: Prefer named exports over default exports.
+- **Rationale**: 
+  - Default exports provide no canonical name, allowing modules to be imported under arbitrary aliases which reduces readability and hinders refactoring.
+  - Named exports yield compilation errors immediately at the import site when a signature changes.
+  - Default exports encourage combining unrelated symbols into large namespace objects.
+  - Named exports optimize tree-shaking and dead-code elimination.
+
+```typescript
+// INCORRECT / ANTIPATTERN
+// user-service.ts
+export default class UserService {
+  getUser() {}
+}
+
+// consumer.ts
+import LocalUserService from "./user-service"; // Renaming is legal but unchecked
+
+// CORRECT / CLEAN
+// user-service.ts
+export class UserService {
+  getUser(): void {}
+}
+
+// consumer.ts
+import { UserService } from "./user-service"; // Explicit and contract-checked
+```
+
+---
+
+## 4. STRICT PROHIBITIONS AND ANTI-PATTERNS (DO'S AND DON'TS)
+
+### 4.1 Boxed Wrapper Objects for Primitive Types
+- **Never**: Instantiate or use the capital-cased boxed wrapper classes `String`, `Number`, `Boolean`, `Symbol`, or `Object` as types.
+- **Instead**: Always use lowercase primitive types: `string`, `number`, `boolean`, `symbol`, and the non-primitive `object` type.
+
+```typescript
+// INCORRECT / ANTIPATTERN
+function reverseString(s: String): String {
+  return s.split("").reverse().join("");
+}
+
+// CORRECT / CLEAN
+function reverseStringSafe(s: string): string {
+  return s.split("").reverse().join("");
+}
+```
+
+### 4.2 Callback Return Type Safety
+- **Never**: Annotate callback functions with a return type of `any` when their return values will be ignored.
+- **Instead**: Use the type `void` for ignored callback returns. This prevents the compiler from allowing unsafe operations on unvalidated return values.
+
+```typescript
+// INCORRECT / ANTIPATTERN
+function executeCallback(cb: () => any): void {
+  const result = cb();
+  result.doSomething(); // Allowed, but highly unsafe!
+}
+
+// CORRECT / CLEAN
+function executeCallbackSafe(cb: () => void): void {
+  const result = cb();
+  // result.doSomething(); // Compile error: Property 'doSomething' does not exist on type 'void'
+}
+```
+
+### 4.3 Callback Optional Parameters
+- **Never**: Mark callback parameters as optional unless you specifically intend to invoke the callback without passing those arguments.
+- **Instead**: Define callback parameters as required. Callers are always permitted to provide callbacks that accept fewer arguments.
+
+```typescript
+// INCORRECT / ANTIPATTERN
+interface DatabaseFetcher {
+  fetch(done: (records: string[], duration?: number) => void): void;
+}
+// This implies fetch might invoke done with only 1 argument.
+
+// CORRECT / CLEAN
+interface DatabaseFetcherSafe {
+  fetch(done: (records: string[], duration: number) => void): void;
+}
+// This guarantees duration is always provided to the callback.
+// The consumer can still legally write a callback ignoring duration:
+const safeConsumer: DatabaseFetcherSafe = {
+  fetch(done) {
+    done(["user1", "user2"], 150);
+  }
+};
+
+safeConsumer.fetch((records) => {
+  console.log(records.length); // Legal and completely safe
+});
+```
+
+### 4.4 Function Overload Ordering
+- **Never**: Put more general overloads before more specific overloads.
+- **Instead**: Sort overloads by putting specific signatures first, followed by more general signatures. TypeScript resolves calls against the *first matching signature*.
+
+```typescript
+// INCORRECT / ANTIPATTERN
+declare function evaluateNode(x: unknown): unknown;
+declare function evaluateNode(x: HTMLElement): number;
+declare function evaluateNode(x: HTMLDivElement): string;
+
+const div = document.createElement("div");
+const result = evaluateNode(div); // result is 'unknown', because first match caught it!
+
+// CORRECT / CLEAN
+declare function evaluateNodeSafe(x: HTMLDivElement): string;
+declare function evaluateNodeSafe(x: HTMLElement): number;
+declare function evaluateNodeSafe(x: unknown): unknown;
+
+const divElement = document.createElement("div");
+const resultSafe = evaluateNodeSafe(divElement); // resultSafe is 'string'
+```
+
+### 4.5 Callback Overloads vs Union Types
+- **Never**: Write separate overloads that differ only by type in a single argument position, or write overloads that differ only on callback arity.
+- **Instead**: Consolidate signatures by using Union Types or optional parameters.
+
+```typescript
+// INCORRECT / ANTIPATTERN
+interface DateOffset {
+  offset(value: number): void;
+  offset(value: string): void;
+}
+
+// CORRECT / CLEAN
+interface DateOffsetSafe {
+  offset(value: number | string): void; // Simpler to implement and consume
+}
+```
+
+### 4.6 Unfiltered Object Iteration
+- **Never**: Iterate over object properties using a raw `for (const key in obj)` loop.
+- **Instead**: Use `for (const key of Object.keys(obj))` or `Object.entries(obj)`. If utilizing `for...in` on custom dictionaries, you must guard access via `Object.prototype.hasOwnProperty`.
+
+```typescript
+// INCORRECT / ANTIPATTERN
+function logProperties(obj: Record<string, string>) {
+  for (const key in obj) {
+    console.log(key, obj[key]); // Prototype properties can leak into results!
+  }
+}
+
+// CORRECT / CLEAN
+function logPropertiesSafe(obj: Record<string, string>): void {
+  for (const [key, value] of Object.entries(obj)) {
+    console.log(key, value); // Guaranteed to iterate only owned properties
+  }
+}
+```
