@@ -1,0 +1,104 @@
+---
+alwaysApply: true
+---
+
+# UNIVERSAL DOCKER AND CONTAINER STRICT RULES
+
+## 1. DOCKERFILE SECURITY AND LEAST PRIVILEGE
+- Non-root User Execution: Running containerized application processes as the default root user in production containers is strictly prohibited. Create a dedicated non-root user and group using system package utilities (e.g., `useradd` or `addgroup`), and explicitly switch execution context using the `USER` instruction prior to runtime execution.
+- Immutable Digest and Tag Pinning: Do not use floating, mutable, or untagged base images such as `FROM node:latest` or `FROM ubuntu:latest`. Mandate explicit, pinned version tags combined with specific image SHA-256 digests (e.g., `node:22-alpine@sha256:...` or `ubuntu:24.04@sha256:...`) and select minimal base variants such as Alpine or slim distroless distributions.
+- Secrets Isolation: Hardcoding API tokens, private keys, passwords, or `.env` file contents inside Dockerfile instructions via `ENV` or `ARG` is strictly prohibited. Unsetting environment variables in later layers still leaks credentials in earlier layer history. Use BuildKit secret mounts (`RUN --mount=type=secret,id=...`) during build time or inject secrets at runtime via Docker secrets or orchestration mechanisms.
+- Build Context Hygiene (.dockerignore): Every containerized repository must include a comprehensive `.dockerignore` file in the root context. Exclude local dependencies (`node_modules`), `.git` directories, local logs, build artifacts, test coverage reports, and sensitive environment files (`.env*`) to minimize build context payload size, accelerate build speed, and prevent sensitive credential leaks.
+
+## 2. IMAGE OPTIMIZATION AND MULTI-STAGE BUILDS
+- Multi-Stage Architecture: All compiled, transpilable, or heavy runtime applications (e.g., Go, Rust, Java, TypeScript) must utilize multi-stage builds. Separate build-time dependencies, compiler toolchains, and intermediate artifacts in an initial build stage from the lean, production runtime image.
+- Layer Cache Optimization: Order Dockerfile instructions strictly from least frequently changed to most frequently changed. Package manifests and lockfiles (`package.json`, `pnpm-lock.yaml`, `Cargo.lock`, `go.mod`) must be copied and installed in an isolated layer before copying application source code.
+- Package Manager Cleanliness: Package manager index caches and temporary files must be purged within the same `RUN` layer that executes package installation (e.g., `apt-get update && apt-get install -y --no-install-recommends ... && rm -rf /var/lib/apt/lists/*`). Running update and cleanup in separate instructions leads to stale cache layer issues and bloated final images.
+
+## 3. DOCKER COMPOSE ORCHESTRATION AND NETWORKING
+- Private Network Isolation: Internal backing services such as PostgreSQL, Redis, or MongoDB must not publish ports (`ports:`) directly to the host network interface in production or staging environments. Restrict internal container communication to isolated, user-defined bridge networks where containers communicate securely via internal service name DNS resolution.
+- Healthcheck-Conditioned Dependencies: Service startup ordering must not rely solely on simple `depends_on: [db]` declarations, as `depends_on` only checks container creation, not service readiness. Enforce condition-based dependency orchestration using `depends_on` linked to explicit, robust healthcheck evaluation (`condition: service_healthy`).
+- Managed Volume Persistence: Production stateful databases and cache services must persist data using managed Docker named volumes (`volumes: [db_data:/var/lib/postgresql/data]`) rather than volatile bind mounts. Bind mounts introduce file permission risks and host filesystem dependencies.
+
+## 4. PROCESS MANAGEMENT AND CONTAINER SIGNALS
+- PID 1 Signal Forwarding and Zombie Reaping: Containerized applications must properly receive and handle POSIX system termination signals (`SIGTERM` and `SIGINT`) as PID 1 to ensure graceful shutdown. Use lightweight init supervisors such as `tini` or `dumb-init`, or ensure the main executable utilizes the `exec` form to replace the shell process.
+- Mandatory Exec Form Syntax: Prohibit shell form string execution (e.g., `CMD node server.js`) for application entrypoints, as shell forms wrap the process in `/bin/sh -c` which traps signals and prevents graceful termination. Strictly mandate JSON array exec form notation (e.g., `ENTRYPOINT ["tini", "--"]` and `CMD ["node", "dist/main.js"]`).
+
+## 5. STRICT PROHIBITIONS AND ANTI-PATTERNS (DO'S AND DON'TS)
+- Running Container Processes as Default Root:
+  - NEVER DO THIS:
+    ```dockerfile
+    FROM node:22-alpine
+    WORKDIR /app
+    COPY . .
+    CMD ["node", "server.js"]
+    ```
+  - DO THIS INSTEAD:
+    ```dockerfile
+    FROM node:22-alpine@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c
+    WORKDIR /app
+    RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+    COPY --chown=appuser:appgroup . .
+    USER appuser
+    CMD ["node", "server.js"]
+    ```
+- Baking Credentials into Image Layers:
+  - NEVER DO THIS:
+    ```dockerfile
+    ENV DATABASE_URL="postgres://admin:secret@db:5432/production"
+    ARG NPM_TOKEN="npm_1234567890secret"
+    ```
+  - DO THIS INSTEAD:
+    ```dockerfile
+    RUN --mount=type=secret,id=npm_token \
+        NPM_TOKEN=$(cat /run/secrets/npm_token) npm ci
+    ```
+- Separate Package Update and Install Layers:
+  - NEVER DO THIS:
+    ```dockerfile
+    RUN apt-get update
+    RUN apt-get install -y curl
+    ```
+  - DO THIS INSTEAD:
+    ```dockerfile
+    RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl \
+        && rm -rf /var/lib/apt/lists/*
+    ```
+- Unnecessary Public Port Exposure for Internal Services:
+  - NEVER DO THIS:
+    ```yaml
+    services:
+      db:
+        image: postgres:16-alpine
+        ports:
+          - "5432:5432"
+    ```
+  - DO THIS INSTEAD:
+    ```yaml
+    services:
+      db:
+        image: postgres:16-alpine
+        networks:
+          - backend
+        expose:
+          - "5432"
+    ```
+- Unconditioned Service Dependency Chains:
+  - NEVER DO THIS:
+    ```yaml
+    services:
+      api:
+        build: .
+        depends_on:
+          - db
+    ```
+  - DO THIS INSTEAD:
+    ```yaml
+    services:
+      api:
+        build: .
+        depends_on:
+          db:
+            condition: service_healthy
+    ```

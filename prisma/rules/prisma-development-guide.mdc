@@ -1,0 +1,129 @@
+---
+alwaysApply: true
+---
+
+# UNIVERSAL PRISMA ORM STRICT RULES
+
+## 1. SCHEMA AND DATA MODELING STANDARDS
+
+- Mandatory Naming Conventions: Models MUST use singular PascalCase (e.g., `User`, `OrderItem`). Fields MUST use camelCase (e.g., `emailAddress`, `createdAt`, `authorId`). Database tables MUST be explicitly mapped to snake_case via `@@map("table_name")`, and database columns MUST be mapped via `@map("column_name")`.
+- Mandatory Primary Key Standards: Every relational model MUST declare a primary key annotated with `@id`. Primary keys MUST use standard unique identifiers generated via `@default(uuid())` or `@default(cuid())`.
+- Mandatory Indexing: All foreign keys, fields used in filtering or sorting criteria, and compound unique keys MUST be explicitly indexed. Use `@unique` for single-field uniqueness, `@@unique([...])` for multi-column unique constraints, and `@@index([...])` for query optimization on non-unique lookup fields.
+- Explicit Relation Definitions: All relation declarations MUST explicitly define `fields` and `references` on the child side holding the foreign key. Explicit `onDelete` and `onUpdate` referential actions (e.g., `Cascade`, `Restrict`, `SetNull`) MUST be specified on `@relation` to maintain referential integrity. Many-to-many relationships MUST use an explicit join table model with a composite primary key `@@id([firstId, secondId])`.
+
+## 2. CLIENT INSTANTIATION AND CONNECTION POOLING
+
+- Absolute Prohibition of Multiple Client Instances: Never instantiate `PrismaClient` directly inside request handlers, functions, or controllers. Instantiating multiple clients causes rapid connection pool exhaustion and memory leaks.
+- Global Singleton Pattern: In Node.js or serverless execution environments, enforce a global singleton pattern attached to `globalThis`. Store the active instance on a global variable during development to prevent hot-reloading module instances from exhausting database connections.
+- Explicit Lifecycle Management: Always attach process signal handlers (`SIGINT`, `SIGTERM`) to gracefully invoke `$disconnect()` during application shutdown hooks, guaranteeing clean connection pool draining.
+
+## 3. QUERY PERFORMANCE AND TYPE SAFETY
+
+- Overfetching Prohibition: Avoid bare `findMany` queries that fetch all scalar columns when only a subset of fields is required for an API response or internal calculation. Enforce targeted `select` projections to reduce memory footprint and database IO.
+- Prohibition of N+1 Queries in Loops: Executing database queries inside loops (such as `for` or `map`) is strictly prohibited. Retrieve related models in a single query using nested `include` / `select` relations, or batch fetch bulk records using the `in` filter operator.
+- Transaction Standards: Enforce sequential batch transactions `$transaction([ ... ])` for independent operations. Use interactive transactions `$transaction(async (tx) => { ... })` strictly when downstream queries depend dynamically on the results of prior operations within the same atomic scope. Always pass `tx` to transactional helper functions instead of calling `db` directly.
+- Pagination Standards: Offset-based pagination (`take` / `skip` or `limit` / `offset`) MUST NOT be used on large or continuously growing datasets due to degraded database performance. Mandate cursor-based pagination (`cursor` with `orderBy`) incorporating a unique tie-breaker field (e.g., `id`) for stable O(1) page traversal.
+
+## 4. MIGRATIONS AND CI/CD WORKFLOWS
+
+- Absolute Prohibition of `db push` in Production: `prisma db push` is strictly prohibited in staging, QA, and production environments because it does not maintain a historical migration log and can cause unrecoverable data loss.
+- Migration History via `migrate dev`: Local schema modifications MUST be executed using `prisma migrate dev --name <migration_name>` to generate version-controlled SQL migration scripts.
+- Production Deployment via `migrate deploy`: Continuous integration and production deployment pipelines MUST execute `prisma migrate deploy` to safely apply pending migration files against the target database.
+- Safe Schema Evolution for Non-Nullable Columns: Adding a new required non-nullable field to an existing table containing data MUST be performed in phased steps: first add the column as optional or provide a `@default(...)` value, or execute a data backfill before applying the non-null constraint.
+
+## 5. STRICT PROHIBITIONS AND ANTI-PATTERNS (DO'S AND DON'TS)
+
+### Unparameterized Raw SQL Queries
+NEVER DO THIS: Executing raw SQL strings with direct string concatenation or template literal interpolation, exposing the application to SQL injection vulnerabilities.
+```typescript
+/* INCORRECT */
+const userInput = "admin'; DROP TABLE users;--";
+const result = await prisma.$queryRawUnsafe(`SELECT * FROM users WHERE username = '${userInput}'`);
+```
+DO THIS INSTEAD: Use parameterized tagged template literals (`$queryRaw`) or the typed query builder so inputs are safely escaped by the underlying driver.
+```typescript
+/* CORRECT */
+const userInput = "admin";
+const result = await prisma.$queryRaw`SELECT * FROM users WHERE username = ${userInput}`;
+```
+
+### N+1 Query Traps in Loops
+NEVER DO THIS: Fetching a list of records and performing individual relational queries inside a loop.
+```typescript
+/* INCORRECT */
+const users = await prisma.user.findMany();
+for (const user of users) {
+  const posts = await prisma.post.findMany({ where: { authorId: user.id } });
+  console.log(user.id, posts.length);
+}
+```
+DO THIS INSTEAD: Fetch the parent records alongside their nested child relations in a single database round-trip using `include`.
+```typescript
+/* CORRECT */
+const usersWithPosts = await prisma.user.findMany({
+  include: { posts: true }
+});
+for (const user of usersWithPosts) {
+  console.log(user.id, user.posts.length);
+}
+```
+
+### Querying the Main Client Inside Transactions
+NEVER DO THIS: Calling the root `prisma` client instance inside a `$transaction` callback instead of using the transactional proxy `tx`.
+```typescript
+/* INCORRECT */
+await prisma.$transaction(async (tx) => {
+  const user = await prisma.user.create({ data: { email: "user@example.com" } });
+  await prisma.post.create({ data: { title: "Hello", authorId: user.id } });
+});
+```
+DO THIS INSTEAD: Perform all operations inside the transaction callback through the `tx` parameter to ensure all writes execute within the atomic transaction boundary.
+```typescript
+/* CORRECT */
+await prisma.$transaction(async (tx) => {
+  const user = await tx.user.create({ data: { email: "user@example.com" } });
+  await tx.post.create({ data: { title: "Hello", authorId: user.id } });
+});
+```
+
+### Missing Foreign Key Indexes
+NEVER DO THIS: Declaring a relation scalar field without creating an index, causing full-table scans on join operations and foreign key lookups.
+```prisma
+// INCORRECT
+model Post {
+  id       String @id @default(uuid())
+  authorId String
+  author   User   @relation(fields: [authorId], references: [id])
+}
+```
+DO THIS INSTEAD: Explicitly declare an index on the foreign key field using `@@index([authorId])`.
+```prisma
+// CORRECT
+model Post {
+  id       String @id @default(uuid())
+  authorId String
+  author   User   @relation(fields: [authorId], references: [id])
+
+  @@index([authorId])
+  @@map("posts")
+}
+```
+
+### Unbound Overfetching Projections
+NEVER DO THIS: Fetching all fields from large tables for public REST or GraphQL endpoints when clients only need basic summary attributes.
+```typescript
+/* INCORRECT */
+const users = await prisma.user.findMany();
+return users.map(u => ({ id: u.id, email: u.email }));
+```
+DO THIS INSTEAD: Pass an explicit `select` block so the database engine only scans and returns the necessary columns.
+```typescript
+/* CORRECT */
+const users = await prisma.user.findMany({
+  select: {
+    id: true,
+    email: true
+  }
+});
+return users;
+```

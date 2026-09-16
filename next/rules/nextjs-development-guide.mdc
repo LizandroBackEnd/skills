@@ -1,0 +1,135 @@
+---
+alwaysApply: true
+---
+
+# UNIVERSAL NEXT.JS APP ROUTER STRICT RULES
+
+## 1. RENDERING PARADIGM AND COMPONENT BOUNDARIES
+- Default to React Server Components (RSC): All components within the `app` directory are Server Components by default. Server Components render exclusively on the server, producing zero JavaScript bundle size overhead and executing close to data sources and databases.
+- Leaf Node Directive Isolation: Pushing the `'use client'` directive down to the extreme leaf nodes of the component tree is strictly mandatory. There is an absolute prohibition on placing `'use client'` at the root layout level (`layout.tsx`) or page level (`page.tsx`). Apply `'use client'` exclusively when a component requires browser APIs (such as `localStorage` or `window`), event listeners (such as `onClick` or `onChange`), state (`useState`), or lifecycle effects (`useEffect`).
+- Server-to-Client Composition Pattern: Never import a Server Component directly inside a Client Component module graph. To compose server-rendered UI inside interactive client components, pass the Server Component as `children` or explicit `ReactNode` props into the Client Component wrapper. The Server Component renders on the server beforehand, and its output is passed via the React Server Component Payload without adding its imports to the client bundle.
+- Environment Poisoning and Secret Protection: Accessing private server-side environment variables or backend credentials inside files marked with `'use client'` or files reachable by client module graphs is strictly prohibited. Mandate importing the `server-only` package in all data-access layer modules to trigger build-time errors if server logic is accidentally imported into client components.
+
+## 2. DATA FETCHING AND SERVER ACTIONS
+- Server-Side Fenced Fetching: Execute data fetching directly inside async Server Components using `async`/`await` and native `fetch` or direct database queries. Performing `useEffect`-based data fetching or client-side HTTP calls for initial page rendering is strictly prohibited.
+- Waterfall Elimination: Multiple independent data fetches within the same Server Component or route segment must execute concurrently using `Promise.all([ ... ])` or `Promise.allSettled([ ... ])` to initiate requests in parallel. Wrap independent asynchronous UI branches in React `<Suspense>` streaming boundaries with fallback skeletons to prevent uncached fetches from blocking navigation.
+- Input Payload Validation in Server Actions: All Server Functions marked with the `'use server'` directive must validate input parameters against a strict schema validator (such as Zod) before executing mutations. Never trust raw form inputs or client-provided parameters blindly.
+- Mutation Cache Invalidation: Explicitly trigger revalidation of cached paths or tags using `revalidatePath` or `revalidateTag` inside Server Actions immediately after updating persistent data. Use `redirect` for post-mutation navigation only after calling revalidation functions.
+
+## 3. ROUTING AND ASSET OPTIMIZATION
+- Route Organization and Special Files: Structure application routes within `app/` using route groups `(group_name)` to organize code without affecting URL paths, co-locating feature components and styles alongside specialized route files (`page.tsx`, `layout.tsx`, `loading.tsx`, `error.tsx`, `not-found.tsx`).
+- API Endpoints vs. Server Actions: Use Route Handlers (`route.ts`) strictly for external webhooks, third-party REST/GraphQL integrations, non-UI content responses, or external mobile clients. All internal user-driven form submissions and UI mutations must favor Server Actions.
+- Mandatory `<Image />` Component: Direct unoptimized HTML `<img>` elements are strictly prohibited. Use the Next.js `<Image />` component imported from `next/image` with explicit `width` and `height` dimensions or `fill` with `sizes` to prevent Cumulative Layout Shift (CLS) and ensure automatic WebP format optimization. Configure `remotePatterns` strictly inside `next.config.ts` for remote images.
+- Font Optimization: External render-blocking `<link>` font tags in HTML headers are strictly prohibited. Mandate `next/font` (such as `next/font/google` or `next/font/local`) to automatically inline font CSS and host font files locally with zero layout shifts.
+
+## 4. STRICT PROHIBITIONS AND ANTI-PATTERNS (DO'S AND DON'TS)
+
+### Page-Level Client Contamination
+Never mark root pages or layouts as Client Components, which inflates the client bundle and breaks server-side data fetching.
+```tsx
+/* INCORRECT / ANTIPATTERN */
+'use client'
+
+export default async function Page() {
+  const data = await fetch('https://api.example.com/data');
+  return <main><div>{data.title}</div></main>;
+}
+```
+Isolate interactive elements inside dedicated leaf components and keep `page.tsx` as an async Server Component.
+```tsx
+/* CORRECT / CLEAN */
+import LikeButton from '@/components/like-button';
+
+export default async function Page() {
+  const res = await fetch('https://api.example.com/data');
+  const data = await res.json();
+  return (
+    <main>
+      <h1>{data.title}</h1>
+      <LikeButton id={data.id} />
+    </main>
+  );
+}
+```
+
+### Direct Server Component Imports in Client Components
+Never import a Server Component directly into a Client Component file.
+```tsx
+/* INCORRECT / ANTIPATTERN */
+'use client'
+import ServerHeader from '@/components/server-header';
+
+export default function ClientModal() {
+  return <div className="modal"><ServerHeader /></div>;
+}
+```
+Pass the Server Component as `children` or a `ReactNode` prop to maintain the server rendering boundary.
+```tsx
+/* CORRECT / CLEAN */
+'use client'
+export default function ClientModal({ children }: { children: React.ReactNode }) {
+  return <div className="modal">{children}</div>;
+}
+```
+
+### Unvalidated Server Actions
+Never execute database operations or mutations without validating parameters on the server.
+```tsx
+/* INCORRECT / ANTIPATTERN */
+'use server'
+import { db } from '@/lib/db';
+
+export async function updateUser(formData: FormData) {
+  const id = formData.get('id') as string;
+  await db.user.update({ where: { id }, data: { role: formData.get('role') as string } });
+}
+```
+Validate inputs using Zod or a schema validator before performing mutations, and trigger revalidation.
+```tsx
+/* CORRECT / CLEAN */
+'use server'
+import { z } from 'zod';
+import { db } from '@/lib/db';
+import { revalidatePath } from 'next/cache';
+
+const UserSchema = z.object({
+  id: z.string().uuid(),
+  role: z.enum(['admin', 'user']),
+});
+
+export async function updateUser(formData: FormData) {
+  const parsed = UserSchema.parse({
+    id: formData.get('id'),
+    role: formData.get('role'),
+  });
+
+  await db.user.update({
+    where: { id: parsed.id },
+    data: { role: parsed.role },
+  });
+
+  revalidatePath('/dashboard/users');
+}
+```
+
+### Sequential Async Waterfalls
+Never await multiple independent asynchronous requests sequentially inside Server Components.
+```tsx
+/* INCORRECT / ANTIPATTERN */
+export default async function Dashboard() {
+  const user = await fetchUser();
+  const analytics = await fetchAnalytics();
+  return <div>{user.name}</div>;
+}
+```
+Execute independent asynchronous data fetches concurrently using `Promise.all`.
+```tsx
+/* CORRECT / CLEAN */
+export default async function Dashboard() {
+  const [user, analytics] = await Promise.all([
+    fetchUser(),
+    fetchAnalytics(),
+  ]);
+  return <div>{user.name}</div>;
+}
+```

@@ -1,0 +1,166 @@
+---
+alwaysApply: true
+---
+
+# UNIVERSAL SCREAMING ARCHITECTURE STRICT RULES
+
+## 1. REPOSITORY AND DIRECTORY LAYOUT STANDARDS
+
+### Absolute Prohibition of Top-Level Technical Grouping
+- High-level directory trees MUST NOT be organized by flat technical layer roles such as `/controllers`, `/services`, `/models`, `/views`, or `/components` dumping all application domains together. Flat technical organization forces developers to navigate across distant global directories for a single feature and obscures domain intent.
+- Code directories MUST be structured around business features and domain use-cases using a Package-by-Feature approach (e.g., `src/features/billing/`, `src/features/authentication/`, `src/features/catalog/`).
+
+### Framework Agnosticism and Delivery Isolation
+- Software architecture MUST scream the business domain and user use-cases, not the underlying framework, ORM, or web server. 
+- Delivery mechanisms such as web servers, REST controllers, and HTTP routers are external infrastructural details and MUST be kept at the periphery of the architecture.
+- Framework-specific routing structures (such as Next.js `app/` or `pages/` directories) MUST serve strictly as thin composition layers that delegate immediately to domain features and use-case handlers.
+
+---
+
+## 2. FEATURE ENCAPSULATION AND PUBLIC API BOUNDARIES
+
+### Strict Boundary Isolation via Public Entry Barrels
+- Every feature module inside `src/features/<feature-name>/` MUST expose its public contract exclusively through a root barrel file (`src/features/<feature-name>/index.ts`).
+- Internal subdirectories within a feature module (`components/`, `api/`, `hooks/`, `types/`, `use-cases/`, `utils/`) MUST remain encapsulated and private to that feature.
+
+### Prohibition of Deep Cross-Feature Imports
+- External modules and sibling features MUST NOT import directly from a feature's internal file paths (e.g., `import { helper } from "@/features/auth/internal/utils"`).
+- All inter-module consumption MUST import strictly from the target feature's root public index (e.g., `import { UserProfile } from "@/features/user"`).
+- Cross-feature compositions MUST occur at the application layer (`src/app/`), preventing tight coupling between sibling domain modules.
+
+### Standardized Feature Module Anatomy
+- Within each feature directory (`src/features/<feature-name>/`), internal elements MUST be organized deterministically into standardized domain subdirectories:
+  - `api/`: API request handlers, query functions, and remote hooks.
+  - `components/`: UI components scoped strictly to this feature.
+  - `hooks/`: Feature-scoped state logic and custom React hooks.
+  - `types/`: Domain-specific TypeScript interfaces and type definitions.
+  - `use-cases/`: Application use-case handlers and command/query execution logic.
+  - `utils/`: Private helper functions consumed solely by this feature.
+
+---
+
+## 3. SHARED KERNEL AND ABSTRACTION RESTRICTIONS
+
+### Prohibition of Unstructured Utility Dumping Grounds
+- Universal dumping-ground folders such as `/common`, `/utils`, or `/helpers` containing domain-specific logic are strictly prohibited.
+- Helper functions MUST reside inside the specific feature module they support. Code may only be promoted to `src/utils/` or `src/shared/` if it is completely domain-agnostic and consumed by at least three independent bounded contexts.
+
+### Domain-Agnostic Shared Kernel
+- Code located in global shared directories (`src/shared/`, `src/components/ui/`, `src/lib/`, `src/utils/`) MUST be generic, reusable, and completely decoupled from business domain rules.
+- Shared UI directories (`src/components/ui/`) MUST contain only dumb presentation primitives (e.g., generic buttons, modals, input controls) that harbor zero domain policies or entity references.
+
+### Strict Unidirectional Dependency Flow and Circular Prevention
+- Code dependencies MUST flow in one direction: `shared` -> `features` -> `app`.
+- Features MAY import from shared modules, but shared modules MUST NEVER import from feature modules or the application layer.
+- Bidirectional or circular dependencies between sibling features are strictly prohibited. If Feature A depends on Feature B, Feature B MUST NEVER import from Feature A.
+
+---
+
+## 4. DEPENDENCY INVERSION AND DATA FLOW
+
+### Inward Dependency Rule
+- High-level business policies and domain entities MUST remain at the core of the architecture, completely independent of databases, web frameworks, and third-party libraries.
+- Source code dependencies MUST point strictly inward toward business rules. Core domain entities (`src/features/<feature>/domain`) MUST NOT import or depend on outer infrastructure adapters or delivery mechanisms.
+
+### Ports and Adapters (Hexagonal Decoupling)
+- Domain entities and use-cases MUST define abstract interfaces (ports) for data access, persistence, and external services.
+- External infrastructure mechanisms (such as Prisma ORM repositories, REST API clients, and Stripe payment adapters) MUST implement these domain ports as concrete adapters.
+
+### Boundary Data Crossing and DTO Isolation
+- Raw persistence models (such as database rows or Prisma ORM client objects) MUST NOT cross domain boundaries into inner use-cases, UI components, or external consumers.
+- Data crossing boundary layers MUST be mapped into simple, isolated Data Transfer Objects (DTOs) or domain entities designed for the target layer's requirements.
+
+---
+
+## 5. STRICT PROHIBITIONS AND ANTI-PATTERNS (DO'S AND DON'TS)
+
+### 1. Top-Level Technical Layering vs. Package-by-Feature
+- NEVER DO THIS: Group source code by technical file type at the root directory.
+```
+/* INCORRECT */
+src/
++-- controllers/
+|   +-- AuthController.ts
+|   +-- OrderController.ts
++-- services/
+|   +-- AuthService.ts
+|   +-- OrderService.ts
++-- models/
+    +-- User.ts
+    +-- Order.ts
+```
+- DO THIS INSTEAD: Group source code into domain-screaming feature modules.
+```
+/* CORRECT */
+src/
++-- features/
+    +-- authentication/
+    |   +-- api/
+    |   +-- components/
+    |   +-- index.ts
+    +-- order-processing/
+        +-- api/
+        +-- use-cases/
+        +-- index.ts
+```
+
+### 2. Deep Cross-Feature Imports vs. Public Barrel Access
+- NEVER DO THIS: Import directly from an internal private directory of a sibling feature.
+```typescript
+/* INCORRECT */
+import { formatCurrency } from "@/features/billing/internal/utils/formatters";
+import { OrderSummary } from "@/features/orders/components/OrderSummary";
+```
+- DO THIS INSTEAD: Import strictly from the root public index barrel of the feature module.
+```typescript
+/* CORRECT */
+import { formatCurrency, OrderSummary } from "@/features/billing";
+```
+
+### 3. Leaking Persistence Models to UI vs. Explicit DTO Mapping
+- NEVER DO THIS: Pass raw database rows or ORM entity instances directly into presentation components.
+```typescript
+/* INCORRECT */
+// UI component bound directly to database schema details
+export function UserCard({ rawPrismaUser }: { rawPrismaUser: PrismaUserRow }) {
+  return <div>{rawPrismaUser.db_user_first_name_field}</div>;
+}
+```
+- DO THIS INSTEAD: Map persistence models to clean domain entities or primitive DTOs at the adapter boundary.
+```typescript
+/* CORRECT */
+export interface UserDTO {
+  readonly id: string;
+  readonly fullName: string;
+}
+
+export function UserCard({ user }: { readonly user: UserDTO }) {
+  return <div>{user.fullName}</div>;
+}
+```
+
+### 4. Direct Infrastructure Dependencies vs. Dependency Inversion Ports
+- NEVER DO THIS: Import concrete ORM databases or external API clients directly into core domain use-cases.
+```typescript
+/* INCORRECT */
+import { prisma } from "@/lib/prisma";
+
+export async function executeOrder(orderId: string) {
+  // Hardcoded ORM dependency inside business logic
+  return await prisma.order.update({ where: { id: orderId }, data: { status: "PAID" } });
+}
+```
+- DO THIS INSTEAD: Define a domain repository port interface and inject the concrete adapter.
+```typescript
+/* CORRECT */
+export interface OrderRepositoryPort {
+  updateStatus(id: string, status: "PAID" | "PENDING"): Promise<void>;
+}
+
+export async function executeOrder(
+  orderId: string, 
+  orderRepo: OrderRepositoryPort
+): Promise<void> {
+  await orderRepo.updateStatus(orderId, "PAID");
+}
+```
